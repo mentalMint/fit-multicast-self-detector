@@ -13,15 +13,16 @@
 #include <sys/ioctl.h>
 
 #define PORT 12000
-#define BUF_SIZE 16
+#define BUF_SIZE 1
 #define PERIOD_SEC 3
 #define INTERFACE "enp0s3"
+#define EXIT_STATUS 1
 
 int socket_fd;
 struct sockaddr_in addr{};
 struct ip_mreq mreq{};
 int addrlen;
-char send_buf[BUF_SIZE];
+int send_buf[BUF_SIZE];
 
 struct StringsComparator {
     bool operator()(const char* a, const char* b) const {
@@ -81,12 +82,13 @@ void close_all() {
 }
 
 void leave() {
-//    if (-1 == sendto(socket_fd, send_buf, BUF_SIZE, 0,
-//                     (struct sockaddr*) &(addr), (socklen_t) addrlen)) {
-//        perror("sendto");
-//        close_all();
-//        exit(EXIT_FAILURE);
-//    }
+    send_buf[0] = EXIT_STATUS;
+    if (-1 == sendto(socket_fd, send_buf, BUF_SIZE, 0,
+                     (struct sockaddr*) &(addr), (socklen_t) addrlen)) {
+        perror("sendto");
+        close_all();
+        exit(EXIT_FAILURE);
+    }
     printf("\n===Exit===\n");
     close_all();
     exit(EXIT_SUCCESS);
@@ -128,8 +130,8 @@ void remove_offline_users(std::map<char*, bool, StringsComparator>& users_online
 //    print_map(users_online);
 //    printf("==================\n\n");
 
-    for (std::_Rb_tree_iterator<std::pair<char* const, bool>> user = users_online.begin(); user != users_online.end(); user++) {
-        user->second = false;
+    for (auto & user : users_online) {
+        user.second = false;
     }
     if (some_users_left) {
         printf("==Some users left==\n");
@@ -143,6 +145,24 @@ void remove_offline_users(std::map<char*, bool, StringsComparator>& users_online
 //        print_map(users_online);
 //        printf("==================\n\n");
 //        fflush(stdout);
+    }
+}
+
+void check_send_timer(struct timespec* timer1_start, struct timespec* timer1_end) {
+    clock_gettime(CLOCK_MONOTONIC_RAW, timer1_end);
+    if (timer1_end->tv_sec - timer1_start->tv_sec >= PERIOD_SEC) {
+        send_datagram();
+        set_addr();
+        clock_gettime(CLOCK_MONOTONIC_RAW, timer1_start);
+    }
+}
+
+void check_remove_timer(struct timespec* timer2_start, struct timespec* timer2_end,
+        std::map<char*, bool, StringsComparator>& users_online) {
+    clock_gettime(CLOCK_MONOTONIC_RAW, timer2_end);
+    if (timer2_end->tv_sec - timer2_start->tv_sec >= PERIOD_SEC * 2) {
+        remove_offline_users(users_online);
+        clock_gettime(CLOCK_MONOTONIC_RAW, timer2_start);
     }
 }
 
@@ -203,7 +223,7 @@ int main() {
     struct timeval tv{};
     int retval;
 
-    char recv_buf[BUF_SIZE];
+    int recv_buf[BUF_SIZE];
     memset(recv_buf, 0, BUF_SIZE);
 
     set_addr();
@@ -243,7 +263,8 @@ int main() {
                         break;
                     }
                 }
-                if (!contains) {
+                if (recv_buf[0] != EXIT_STATUS) {
+                    if (!contains) {
                     char* user_address = (char*) malloc(20);
                     strcpy(user_address, user_address_tmp);
                     users_online.insert({user_address, true});
@@ -253,47 +274,21 @@ int main() {
                     printf("==================\n\n");
                     fflush(stdout);
                 } else {
-                    printf("%s confirmed\n", user_address_tmp);
-                    fflush(stdout);
-                    users_online[user_address_tmp] = true;
+                        printf("%s confirmed\n", user_address_tmp);
+                        fflush(stdout);
+                        users_online[user_address_tmp] = true;
+                    }
+                } else {
+                    users_online.erase(user_address_tmp);
                 }
-
-                clock_gettime(CLOCK_MONOTONIC_RAW, &timer1_end);
-                if (timer1_end.tv_sec - timer1_start.tv_sec >= PERIOD_SEC) {
-                    send_datagram();
-                    set_addr();
-                    clock_gettime(CLOCK_MONOTONIC_RAW, &timer1_start);
-                }
-
-                clock_gettime(CLOCK_MONOTONIC_RAW, &timer2_end);
-                if (timer2_end.tv_sec - timer2_start.tv_sec >= PERIOD_SEC * 2) {
-                    remove_offline_users(users_online);
-                    clock_gettime(CLOCK_MONOTONIC_RAW, &timer2_start);
-                }
+                check_send_timer(&timer1_start, &timer1_end);
+                check_remove_timer(&timer2_start, &timer2_end, users_online);
             }
-//            printf("===Received===\n");
-//            printf("Sender IP: %s\n", user_address_tmp);
-//            printf("==============\n");
         } else {
-            clock_gettime(CLOCK_MONOTONIC_RAW, &timer2_end);
-            if (timer2_end.tv_sec - timer2_start.tv_sec >= PERIOD_SEC * 2) {
-//                if (!users_online.empty()) {
-//                    for (auto user: users_online) {
-//                        free(user.first);
-//                    }
-//                    users_online.clear();
-//                    printf("==All users left==\n");
-//                    printf("===Users online===\n");
-//                    printf("==================\n\n");
-//                    fflush(stdout);
-//                }
-                remove_offline_users(users_online);
-                clock_gettime(CLOCK_MONOTONIC_RAW, &timer2_start);
-            }
+            check_remove_timer(&timer2_start, &timer2_end, users_online);
             send_datagram();
         }
     }
-
     close_all();
     return EXIT_FAILURE;
 }
