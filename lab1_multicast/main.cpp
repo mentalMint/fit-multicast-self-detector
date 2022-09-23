@@ -1,3 +1,4 @@
+#include <iostream>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -15,7 +16,9 @@
 #define BUF_SIZE 1
 #define PERIOD_SEC 3
 #define INTERFACE "enp0s3"
-#define EXIT_STATUS 1
+#define DEFAULT_STATUS 0
+#define CONNECT_STATUS 1
+#define EXIT_STATUS 2
 
 int socket_fd;
 struct sockaddr_in addr{};
@@ -31,11 +34,7 @@ struct StringsComparator {
 
 void print_map(const std::map<char*, bool, StringsComparator> &map) {
     for (auto n: map) {
-        if (n.second) {
-            printf("%s is online\n", n.first);
-        } else {
-            printf("%s is offline\n", n.first);
-        }
+            printf("%s\n", n.first);
     }
 }
 
@@ -79,7 +78,7 @@ void set_addr() {
     addrlen = sizeof(addr);
 }
 
-void remove_offline_users(std::map<char*, bool, StringsComparator>& users_online) {
+void remove_offline_users(std::map<char*, bool, StringsComparator> &users_online) {
     bool some_users_left = false;
     for (auto user = users_online.cbegin(); user != users_online.cend();) {
         if (!user->second) {
@@ -91,7 +90,7 @@ void remove_offline_users(std::map<char*, bool, StringsComparator>& users_online
         }
     }
 
-    for (auto & user : users_online) {
+    for (auto &user: users_online) {
         user.second = false;
     }
     if (some_users_left) {
@@ -103,9 +102,9 @@ void remove_offline_users(std::map<char*, bool, StringsComparator>& users_online
     }
 }
 
-void check_send_timer(struct timespec* timer1_start, struct timespec* timer1_end) {
+void check_need_for_send(struct timespec* timer1_start, struct timespec* timer1_end, int* recv_buf) {
     clock_gettime(CLOCK_MONOTONIC_RAW, timer1_end);
-    if (timer1_end->tv_sec - timer1_start->tv_sec >= PERIOD_SEC) {
+    if (timer1_end->tv_sec - timer1_start->tv_sec >= PERIOD_SEC || recv_buf[0] == CONNECT_STATUS) {
         send_datagram();
         set_addr();
         clock_gettime(CLOCK_MONOTONIC_RAW, timer1_start);
@@ -113,7 +112,7 @@ void check_send_timer(struct timespec* timer1_start, struct timespec* timer1_end
 }
 
 void check_remove_timer(struct timespec* timer2_start, struct timespec* timer2_end,
-        std::map<char*, bool, StringsComparator>& users_online) {
+                        std::map<char*, bool, StringsComparator> &users_online) {
     clock_gettime(CLOCK_MONOTONIC_RAW, timer2_end);
     if (timer2_end->tv_sec - timer2_start->tv_sec >= PERIOD_SEC * 4) {
         remove_offline_users(users_online);
@@ -184,11 +183,11 @@ int main() {
     set_addr();
 
     std::map<char*, bool, StringsComparator> users_online;
+    send_buf[0] = CONNECT_STATUS;
     send_datagram();
-
+    send_buf[0] = DEFAULT_STATUS;
     struct timespec timer1_start{}, timer1_end{};
     struct timespec timer2_start{}, timer2_end{};
-
     clock_gettime(CLOCK_MONOTONIC_RAW, &timer1_start);
     clock_gettime(CLOCK_MONOTONIC_RAW, &timer2_start);
 
@@ -211,7 +210,7 @@ int main() {
             user_address_tmp = inet_ntoa(addr.sin_addr);
             if (strcmp(user_address_tmp, host_address) != 0) {
                 bool contains = false;
-                for (auto user : users_online) {
+                for (auto user: users_online) {
                     if (strcmp(user.first, user_address_tmp) == 0) {
                         contains = true;
                         break;
@@ -219,15 +218,15 @@ int main() {
                 }
                 if (recv_buf[0] != EXIT_STATUS) {
                     if (!contains) {
-                    char* user_address = (char*) malloc(20);
-                    strcpy(user_address, user_address_tmp);
-                    users_online.insert({user_address, true});
-                    printf("==New user online==\n");
-                    printf("===Users online===\n");
-                    print_map(users_online);
-                    printf("==================\n\n");
-                    fflush(stdout);
-                } else {
+                        char* user_address = (char*) malloc(20);
+                        strcpy(user_address, user_address_tmp);
+                        users_online.insert({user_address, true});
+                        printf("==New user online==\n");
+                        printf("===Users online===\n");
+                        print_map(users_online);
+                        printf("==================\n\n");
+                        fflush(stdout);
+                    } else {
                         users_online[user_address_tmp] = true;
                     }
                 } else {
@@ -238,7 +237,7 @@ int main() {
                     printf("==================\n\n");
                     fflush(stdout);
                 }
-                check_send_timer(&timer1_start, &timer1_end);
+                check_need_for_send(&timer1_start, &timer1_end, recv_buf);
                 check_remove_timer(&timer2_start, &timer2_end, users_online);
             }
         } else {
