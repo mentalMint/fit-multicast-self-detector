@@ -1,4 +1,3 @@
-#include <iostream>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -40,13 +39,6 @@ void print_map(const std::map<char*, bool, StringsComparator> &map) {
     }
 }
 
-void print_array(int* array, size_t size) {
-    for (size_t i = 0; i < size; i++) {
-        printf("%d ", array[i]);
-    }
-    fflush(stdout);
-}
-
 void set_select(fd_set* readfds, struct timeval* tv) {
     if (FD_ISSET(socket_fd, readfds) == 0) {
         FD_ZERO(readfds);
@@ -54,27 +46,6 @@ void set_select(fd_set* readfds, struct timeval* tv) {
     }
     tv->tv_sec = PERIOD_SEC;
     tv->tv_usec = 0;
-}
-
-void check_host_name(int hostname) { //This function returns host name for local computer
-    if (hostname == -1) {
-        perror("gethostname");
-        exit(1);
-    }
-}
-
-void check_host_entry(struct hostent* hostentry) { //find host info from host name
-    if (hostentry == NULL) {
-        perror("gethostbyname");
-        exit(1);
-    }
-}
-
-void IP_formatter(const char* IPbuffer) { //convert send_buf string to dotted decimal format
-    if (NULL == IPbuffer) {
-        perror("inet_ntoa");
-        exit(1);
-    }
 }
 
 void close_all() {
@@ -101,9 +72,6 @@ void send_datagram() {
         close_all();
         exit(EXIT_FAILURE);
     }
-//    printf("===Sent===\n");
-//    printf("==========\n");
-//    fflush(stdout);
 }
 
 void set_addr() {
@@ -112,12 +80,9 @@ void set_addr() {
 }
 
 void remove_offline_users(std::map<char*, bool, StringsComparator>& users_online) {
-//    printf("Check if someone offline\n");
-//    fflush(stdout);
     bool some_users_left = false;
     for (auto user = users_online.cbegin(); user != users_online.cend();) {
         if (!user->second) {
-//            printf("Erase %s\n", user->first);
             free(user->first);
             user = users_online.erase(user);
             some_users_left = true;
@@ -125,10 +90,6 @@ void remove_offline_users(std::map<char*, bool, StringsComparator>& users_online
             ++user;
         }
     }
-
-//    printf("===Users were online===\n");
-//    print_map(users_online);
-//    printf("==================\n\n");
 
     for (auto & user : users_online) {
         user.second = false;
@@ -139,12 +100,6 @@ void remove_offline_users(std::map<char*, bool, StringsComparator>& users_online
         print_map(users_online);
         printf("==================\n\n");
         fflush(stdout);
-    } else {
-//        printf("==No changes==\n");
-//        printf("===Users online===\n");
-//        print_map(users_online);
-//        printf("==================\n\n");
-//        fflush(stdout);
     }
 }
 
@@ -160,7 +115,7 @@ void check_send_timer(struct timespec* timer1_start, struct timespec* timer1_end
 void check_remove_timer(struct timespec* timer2_start, struct timespec* timer2_end,
         std::map<char*, bool, StringsComparator>& users_online) {
     clock_gettime(CLOCK_MONOTONIC_RAW, timer2_end);
-    if (timer2_end->tv_sec - timer2_start->tv_sec >= PERIOD_SEC * 2) {
+    if (timer2_end->tv_sec - timer2_start->tv_sec >= PERIOD_SEC * 4) {
         remove_offline_users(users_online);
         clock_gettime(CLOCK_MONOTONIC_RAW, timer2_start);
     }
@@ -255,7 +210,6 @@ int main() {
 
             user_address_tmp = inet_ntoa(addr.sin_addr);
             if (strcmp(user_address_tmp, host_address) != 0) {
-//                if (users_online.find(user_address_tmp) == users_online.end()) {
                 bool contains = false;
                 for (auto user : users_online) {
                     if (strcmp(user.first, user_address_tmp) == 0) {
@@ -274,12 +228,15 @@ int main() {
                     printf("==================\n\n");
                     fflush(stdout);
                 } else {
-                        printf("%s confirmed\n", user_address_tmp);
-                        fflush(stdout);
                         users_online[user_address_tmp] = true;
                     }
                 } else {
                     users_online.erase(user_address_tmp);
+                    printf("==Some users left==\n");
+                    printf("===Users online===\n");
+                    print_map(users_online);
+                    printf("==================\n\n");
+                    fflush(stdout);
                 }
                 check_send_timer(&timer1_start, &timer1_end);
                 check_remove_timer(&timer2_start, &timer2_end, users_online);
