@@ -1,0 +1,1 @@
+/usr/bin/g++ -g CMakeFiles/lab1_multicast.dir/main.cpp.o -o lab1_multicast 
