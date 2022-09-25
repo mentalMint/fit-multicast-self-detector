@@ -62,10 +62,9 @@ void leave() {
     if (-1 == sendto(socket_fd, send_buf, BUF_SIZE, 0,
                      (struct sockaddr*) &(addr), (socklen_t) addrlen)) {
         perror("sendto");
-        close_all();
-        exit(EXIT_FAILURE);
+    } else {
+        printf("\n===Exit===\n");
     }
-    printf("\n===Exit===\n");
     close_all();
     exit(EXIT_SUCCESS);
 }
