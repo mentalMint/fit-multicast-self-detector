@@ -20,12 +20,14 @@
 #define STATUS_DEFAULT 0
 #define STATUS_CONNECT 1
 #define STATUS_EXIT 2
+#define USAGE "Usage:\n\texecute IPADDR\n\texecute IPADDR INTERFACE\nWhere:\n\tIPADDR { IPv4 multicast group address }\n\tINTERFACE { Interface name }\n"
 
 int socket_fd;
-struct sockaddr_in addr{};
-struct ip_mreq mreq{};
+struct sockaddr_in socket_address{};
+struct ip_mreq group{};
 int addrlen;
 int send_buf[BUF_SIZE];
+char* host_address;
 
 struct StringsComparator {
     bool operator()(const char* a, const char* b) const {
@@ -54,13 +56,14 @@ void set_select(fd_set* readfds, struct timeval* tv, bool connection) {
 }
 
 void close_all() {
+    free(host_address);
     close(socket_fd);
 }
 
 void leave() {
     send_buf[0] = STATUS_EXIT;
     if (-1 == sendto(socket_fd, send_buf, BUF_SIZE, 0,
-                     (struct sockaddr*) &(addr), (socklen_t) addrlen)) {
+                     (struct sockaddr*) &(socket_address), (socklen_t) addrlen)) {
         perror("sendto");
     } else {
         printf("\n===Exit===\n");
@@ -71,7 +74,7 @@ void leave() {
 
 void send_datagram() {
     if (-1 == sendto(socket_fd, send_buf, BUF_SIZE, 0,
-                     (struct sockaddr*) &(addr), (socklen_t) addrlen)) {
+                     (struct sockaddr*) &(socket_address), (socklen_t) addrlen)) {
         perror("sendto");
         close_all();
         exit(EXIT_FAILURE);
@@ -79,8 +82,8 @@ void send_datagram() {
 }
 
 void set_addr() {
-    addr.sin_addr.s_addr = mreq.imr_multiaddr.s_addr;
-    addrlen = sizeof(addr);
+    socket_address.sin_addr.s_addr = group.imr_multiaddr.s_addr;
+    addrlen = sizeof(socket_address);
 }
 
 void remove_offline_users(std::map<char*, bool, StringsComparator> &users_online) {
@@ -143,47 +146,76 @@ void check_connection_timer(bool* connection, struct timespec* timer3_start, str
     }
 }
 
-int main() {
+int get_ip_version(const char* src) {
+    char buf[16];
+    if (inet_pton(AF_INET, src, buf)) {
+        return AF_INET;
+    } else if (inet_pton(AF_INET6, src, buf)) {
+        return AF_INET6;
+    }
+    return -1;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "Wrong number of arguments.\n\n");
+        fprintf(stderr, USAGE);
+        return EXIT_FAILURE;
+    }
+
+    char* group_address = (char*) malloc(INET_ADDRSTRLEN);
+    strcpy(group_address, argv[1]);
+
+    int ip_version = get_ip_version(group_address);
+    if (ip_version != AF_INET) {
+        fprintf(stderr, "Wrong input.\n\n");
+        fprintf(stderr, USAGE);
+        return EXIT_FAILURE;
+    }
+
     socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd < 0) {
         perror("socket");
         return EXIT_FAILURE;
     }
 
-    struct ifreq ifr{};
-    ifr.ifr_addr.sa_family = AF_INET;
-    strncpy(ifr.ifr_name, INTERFACE, IFNAMSIZ - 1);
-    ioctl(socket_fd, SIOCGIFADDR, &ifr);
-    char* user_address_tmp = inet_ntoa(((struct sockaddr_in*) &ifr.ifr_addr)->sin_addr);
-    char* host_address = (char*) malloc(20);
+    struct ifreq interface{};
+    interface.ifr_addr.sa_family = AF_INET;
+    strncpy(interface.ifr_name, argv[2] != nullptr ? argv[2] : INTERFACE, IFNAMSIZ - 1);
+    ioctl(socket_fd, SIOCGIFADDR, &interface);
+    char* user_address_tmp = inet_ntoa(((struct sockaddr_in*) &interface.ifr_addr)->sin_addr);
+    host_address = (char*) malloc(INET_ADDRSTRLEN);
     strcpy(host_address, user_address_tmp);
     printf("Your IP: %s\n", host_address);
 
     const int optval = 1;
-    if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) != 0) {
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR,
+                   &optval, sizeof(optval)) != 0) {
         perror("setsockopt. Reuse address");
+        close_all();
         return EXIT_FAILURE;
     }
 
-    bzero(&addr, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(PORT);
+    bzero(&socket_address, sizeof(socket_address));
+    socket_address.sin_family = AF_INET;
+    socket_address.sin_port = htons(PORT);
 
-    if (0 != bind(socket_fd, (sockaddr*) &addr, sizeof(addr))) {
+    if (0 != bind(socket_fd, (sockaddr*) &socket_address, sizeof(socket_address))) {
         perror("bind");
         close_all();
         return EXIT_FAILURE;
     }
 
-    char ip_addr[] = "224.0.0.1";
-    if (0 == inet_aton(ip_addr, &(mreq.imr_multiaddr))) {
+    if (0 == inet_aton(group_address, &(group.imr_multiaddr))) {
         fprintf(stderr, "Invalid address\n");
         close_all();
         return EXIT_FAILURE;
     }
-    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    free(group_address);
+    group.imr_interface.s_addr = htonl(INADDR_ANY);
 
-    if (setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
+    if (setsockopt(socket_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+                   &group, sizeof(group)) != 0) {
         perror("setsockopt. Ip add membership");
         close_all();
         return EXIT_FAILURE;
@@ -226,12 +258,12 @@ int main() {
             break;
         } else if (retval > 0) {
             ssize_t length = recvfrom(socket_fd, recv_buf, BUF_SIZE, 0,
-                                      (struct sockaddr*) &addr, (socklen_t*) (&addrlen));
+                                      (struct sockaddr*) &socket_address, (socklen_t*) (&addrlen));
             if (length < 0) {
                 perror("recvfrom");
                 break;
             }
-            user_address_tmp = inet_ntoa(addr.sin_addr);
+            user_address_tmp = inet_ntoa(socket_address.sin_addr);
             if (strcmp(user_address_tmp, host_address) != 0) {
                 bool contains = false;
                 for (auto user: users_online) {
@@ -242,7 +274,7 @@ int main() {
                 }
                 if (recv_buf[0] != STATUS_EXIT) {
                     if (!contains) {
-                        char* user_address = (char*) malloc(20);
+                        char* user_address = (char*) malloc(INET_ADDRSTRLEN);
                         strcpy(user_address, user_address_tmp);
                         users_online.insert({user_address, true});
                         if (!connection) {
