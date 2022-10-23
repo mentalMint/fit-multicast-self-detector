@@ -1,10 +1,6 @@
 package nsu.fit.web.tcpfilesharing.client;
 
-import nsu.fit.web.tcpfilesharing.UnicodeReader;
-
 import java.io.*;
-import java.net.URISyntaxException;
-import java.net.URL;
 import java.nio.file.Files;
 
 public class ClientMain {
@@ -34,19 +30,6 @@ public class ClientMain {
         String path = file.getPath();
         System.out.println(path);
 
-//        URL url;
-//        try {
-//            url = ClientMain.class.getResource(filePath);
-//        } catch (NullPointerException e) {
-//            System.err.println("Name is not provided\n");
-//            return;
-//        }
-//
-//        if (url == null) {
-//            System.err.println("File not found\n");
-//            return;
-//        }
-
         byte[] fileContent;
         try {
             fileContent = Files.readAllBytes(file.toPath());
@@ -55,22 +38,15 @@ public class ClientMain {
             return;
         }
 
-//        try {
-//            fileContent = UnicodeReader.readToBytes(url);
-//        } catch (IOException | URISyntaxException e) {
-//            e.printStackTrace();
-//            return;
-//        }
-
-        System.out.println(file.getName());
+        System.out.println("Send: " + file.getName());
 
         try (Client client = new Client(serverName, serverPort)){
-            client.send(fileContent);
-//            String response = client.sendMessage("hello server");
-//            System.out.println(response);
+            client.start(fileContent, file.getName());
+            System.out.println("Success");
+        } catch (UnsuccessfulFileSharingException e) {
+            System.out.println("Failure");
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
-
 }
