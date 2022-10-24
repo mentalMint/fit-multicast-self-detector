@@ -26,22 +26,8 @@ public class ClientMain {
             return;
         }
 
-        File file = new File(filePath);
-        String path = file.getPath();
-        System.out.println(path);
-
-        byte[] fileContent;
-        try {
-            fileContent = Files.readAllBytes(file.toPath());
-        } catch (IOException e) {
-            e.printStackTrace();
-            return;
-        }
-
-        System.out.println("Send: " + file.getName());
-
         try (Client client = new Client(serverName, serverPort)){
-            client.start(fileContent, file.getName());
+            client.start(filePath);
             System.out.println("Success");
         } catch (UnsuccessfulFileSharingException e) {
             System.out.println("Failure");

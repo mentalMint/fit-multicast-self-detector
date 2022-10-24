@@ -4,7 +4,9 @@ import java.io.*;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.zip.CRC32;
+import java.util.zip.CheckedInputStream;
 import java.util.zip.Checksum;
 
 public class Client implements AutoCloseable{
@@ -20,24 +22,39 @@ public class Client implements AutoCloseable{
         return crc32.getValue();
     }
 
-    private void send(byte[] fileContent, String fileName) throws IOException {
+    private long sendFile(OutputStream output, File file) throws IOException {
+        int bufferSize = 100000;
+        byte[] buffer = new byte[bufferSize];
+        int bytesRead;
+
+
+        FileInputStream input = new FileInputStream(file);
+        CheckedInputStream checkedInputStream = new CheckedInputStream(input, new CRC32());
+
+        while ((bytesRead = checkedInputStream.read(buffer)) >= 0) {
+            output.write(Arrays.copyOfRange(buffer, 0, bytesRead));
+        }
+        checkedInputStream.close();
+        return checkedInputStream.getChecksum().getValue();
+    }
+
+    private void send(File file) throws IOException {
+        String fileName = file.getName();
+        System.out.println("Send: " + fileName);
         OutputStream output = clientSocket.getOutputStream();
-        System.err.println("here");
         byte[] byteFileName = fileName.getBytes(StandardCharsets.UTF_8);
         byte[] byteNameSize = ByteBuffer.allocate(Integer.BYTES).putInt(byteFileName.length).array();
+        long fileSize = file.length();
+        byte[] byteFileSize = ByteBuffer.allocate(Long.BYTES).putLong(fileSize).array();
+
         output.write(byteNameSize);
-
-        byte[] byteFileSize = ByteBuffer.allocate(Integer.BYTES).putInt(fileContent.length).array();
         output.write(byteFileSize);
+        output.write(byteFileName);
 
-        long checksum = getCRC32Checksum(fileContent);
+        long checksum = sendFile(output, file);
         System.out.println("Checksum: " + checksum);
         byte[] byteChecksum = ByteBuffer.allocate(Long.BYTES).putLong(checksum).array();
         output.write(byteChecksum);
-
-        output.write(byteFileName);
-        output.write(fileContent);
-        output.write(byteFileName);
     }
 
     private void receive() throws IOException, UnsuccessfulFileSharingException {
@@ -49,8 +66,11 @@ public class Client implements AutoCloseable{
         }
     }
 
-    public void start(byte[] fileContent, String fileName) throws IOException, UnsuccessfulFileSharingException {
-        send(fileContent, fileName);
+    public void start(String filePath) throws IOException, UnsuccessfulFileSharingException {
+        File file = new File(filePath);
+        String path = file.getPath();
+        System.out.println(path);
+        send(file);
         receive();
     }
 
